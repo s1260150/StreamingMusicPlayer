@@ -3,9 +3,7 @@ package com.app;
 import java.io.*;
 import java.net.*;
 
-import javax.sound.sampled.*;
-
-import it.sauronsoftware.jave.*;
+import com.xuggle.xuggler.*;
 
 import com.mylib.*;
 
@@ -15,123 +13,205 @@ public class PlayerController extends Thread {
 
     static final String MSG_PLAY = "PLAY";
     static final String MSG_STOP = "STOP";
+    static final String MSG_MUSIC_FINISH = "MUSIC_FINISH";
     static final String MSG_FINISH = "FINISH";
+
+    private Task task;
 
     public PlayerController() {
     }
 
     @Override
     public void run() {
-        MyReader reader = new MyReader(System.in);
-
-        try (Socket cs = new Socket(HOST, PORT);
-            MyWriter writer = new MyWriter(cs.getOutputStream());) 
+        
+        try(MyReader reader = new MyReader(System.in);)
         {
-            while (true) {
-                String op = reader.readLine();
+            try (Socket cs = new Socket(HOST, PORT); MyWriter writer = new MyWriter(cs.getOutputStream());) {
+                while (true) {
+                    String op = reader.readLine();
 
-                if (op.equals("p")) {
-                    System.out.println("ミュージックを再生します。\n1.wavtest.wav\n2.HIRAHIRA.mp3\n3.m4aTest.m4a");
+                    if (op.equals("p")) {
+                        System.out.println("ミュージックを再生します。\n1.wavtest.wav\n2.HIRAHIRA.mp3\n3.m4aTest.m4a");
 
-                    File path;
+                        File path;
 
-                    int choose = Integer.parseInt(reader.readLine());
-                    switch (choose) {
-                        case 1:
-                            path = new File("Resources/wavtest.wav");
-                            break;
+                        int choose = Integer.parseInt(reader.readLine());
+                        switch (choose) {
+                            case 1:
+                                path = new File("Resources/wavtest.wav");
+                                break;
 
-                        case 2:
-                            path = new File("Resources/HIRAHIRA.mp3");
-                            break;
+                            case 2:
+                                path = new File("Resources/HIRAHIRA.mp3");
+                                break;
 
-                        case 3:
-                            path = new File("Resources/m4aTest.m4a");
-                            break;
+                            case 3:
+                                path = new File("Resources/m4aTest.m4a");
+                                break;
 
-                        default:
-                            path = new File("Resources/m4aTest.m4a");
-                            break;
-                    }
-
-                    
-                    System.out.println("音楽ファイルをコンバートします");
-                    File source = path;
-                    File target = new File("target.wav");
-                    AudioAttributes audio = new AudioAttributes();
-                    audio.setCodec("pcm_s16le");    //s : 符号付, 16 : 16bit,  le : リトルエンディアン
-                    EncodingAttributes attrs = new EncodingAttributes();
-                    attrs.setFormat("wav");
-                    attrs.setAudioAttributes(audio);
-                    Encoder encoder = new Encoder();
-                    try {
-                        encoder.encode(source, target, attrs);
-                    } catch (IllegalArgumentException | EncoderException e) {
-                        e.printStackTrace();
-                        return;
-                    }
-
-                    writer.writeLine(MSG_PLAY);
-
-                    System.out.println("音楽用ソケットの接続を開始します");
-                    try (Socket s = new Socket(HOST, PORT);
-                            AudioInputStream ais = AudioSystem.getAudioInputStream(target);
-                            MyReader r = new MyReader(ais);
-                            MyWriter w = new MyWriter(s.getOutputStream());) 
-                    {
-                        AudioFormat format = ais.getFormat();
-                        w.writeFloat(format.getSampleRate());
-                        w.writeInt(format.getSampleSizeInBits());
-                        w.writeInt(format.getChannels());
-                        w.writeBoolean(true);
-                        w.writeBoolean(format.isBigEndian());
-                        
-						//総フレーム数
-						long frames = ais.getFrameLength();
-						//一秒あたりに処理するフレーム数
-						double frameRate = format.getSampleRate();
-	
-                        System.out.println("再生時間 : " + (int)(frames / frameRate));
-
-                        int bytesRead = 0;
-                        byte[] bytes = new byte[4096];
-                        while((bytesRead = r.readBinary(bytes)) != -1)
-                        {
-                            w.writeBinary(bytes, 0, bytesRead);
+                            default:
+                                path = new File("Resources/m4aTest.m4a");
+                                break;
                         }
+
+                        String filename = path.toString();
+
+                        writer.writeLine(MSG_PLAY);
+
+                        Socket s = new Socket(HOST, PORT);
+
+                        task = new Task(filename, s);
+                        new Thread(task).start();
+                    }
+                    else if (op.equals("s"))
+                    {
+                        System.out.println("ミュージックを一時停止します");
                         
-                        // while(!music.isFinished())
-                        // {
-                        // 	double sec = music.getPlayedBytes() / ( format.getSampleRate() * format.getSampleSizeInBits() * format.getChannels() / 8 );
-                        // 	System.out.println(sec);
-                        // 	Thread.sleep(100);
-                        // }
+                        writer.writeLine(MSG_STOP);
+                    }
+                    else if (op.equals("f"))
+                    {
+                        System.out.println("ミュージックを終了します");
+
+                        if (task != null)
+                            task.close();
+                        task = null;
+
+                        writer.writeLine(MSG_MUSIC_FINISH);
+                    } else if (op.equals("exit")) {
+                        System.out.println("終了します");
+                        writer.writeLine(MSG_FINISH);
+                        break;
                     }
                 }
-                else if(op.equals("s"))
-                {
-                    System.out.println("ミュージックを一時停止します");
-                    writer.writeLine(MSG_STOP);
-                }
-                else if(op.equals("f"))
-                {
-                    System.out.println("終了します");
-                    writer.writeLine(MSG_FINISH);
-                    break;
-                }
-            }
-        }
+            } catch (IOException e) {
+                e.printStackTrace();
+            } finally {
+                System.out.println("Connection Closed");
+            } 
+        }   
         catch(IOException e)
         {
-            e.printStackTrace();
+
         }
-        catch(UnsupportedAudioFileException e)
-        {
-            e.printStackTrace();
+    }
+
+    class Task implements Runnable {
+
+        private String filename;
+        private Socket socket;
+
+        private boolean closed;
+
+        public Task(String filename, Socket socket) {
+            this.filename = filename;
+            this.socket = socket;
+            closed = false;
         }
-        finally
-        {
-            System.out.println("Connection Closed");
+
+        public void close() {
+            closed = true;
+        }
+
+        @Override
+        public void run() {
+
+            IContainer container = IContainer.make();
+            IStreamCoder audioCoder = null;
+            try(MyWriter writer = new MyWriter(socket.getOutputStream())) 
+            {
+                System.out.println("接続を完了しました");
+                
+                System.out.println("音楽ファイルを開きます");
+                if (container.open(filename, IContainer.Type.READ, null) < 0)
+                    throw new IllegalArgumentException("could not open file: " + filename);
+
+                System.out.println("ストリームの最大数を取得します");
+                // query how many streams the call to open found
+                int numStreams = container.getNumStreams();
+
+                System.out.println("オーディオストリームを取得します");
+                // and iterate through the streams to find the first audio stream
+                int audioStreamId = -1;
+                for(int i = 0; i < numStreams; i++)
+                {
+                    // Find the stream object
+                    IStream stream = container.getStream(i);
+                    // Get the pre-configured decoder that can decode this stream;
+                    IStreamCoder coder = stream.getStreamCoder();
+                    
+                    if (coder.getCodecType() == ICodec.Type.CODEC_TYPE_AUDIO)
+                    {
+                        audioStreamId = i;
+                        audioCoder = coder;
+                        break;
+                    }
+                }
+                if (audioStreamId == -1)
+                    throw new RuntimeException("could not find audio stream in container: "+filename);
+
+                if (audioCoder.open(null, null) < 0)
+                    throw new RuntimeException("could not open audio decoder for container: "+filename);
+
+                
+                System.out.println("音楽ファイルフォーマットを送信します");
+                writer.writeFloat((float)audioCoder.getSampleRate());
+                writer.writeInt((int)IAudioSamples.findSampleBitDepth(audioCoder.getSampleFormat()));
+                writer.writeInt(audioCoder.getChannels());
+                writer.writeBoolean(true);
+                writer.writeBoolean(false);
+
+                System.out.println("sample rate : " + (float)audioCoder.getSampleRate());
+                System.out.println("bits : " + (int)IAudioSamples.findSampleBitDepth(audioCoder.getSampleFormat()));
+                System.out.println("channels : " + audioCoder.getChannels());
+                System.out.println("frame size : " + audioCoder.getAudioFrameSize());
+                System.out.println("codec id : " + audioCoder.getCodecID().toString());
+
+                
+                System.out.println("音楽ファイルの伝送を開始します");
+                IPacket packet = IPacket.make();
+                while(container.readNextPacket(packet) >= 0 && !closed)
+                {
+                    if (packet.getStreamIndex() != audioStreamId) 
+                        continue;
+                    
+                    IAudioSamples samples = IAudioSamples.make(1024, audioCoder.getChannels());
+
+                    int offset = 0;
+                    while(offset < packet.getSize() && !closed)
+                    {
+                        int bytesDecoded = audioCoder.decodeAudio(samples, packet, offset);
+                        //System.out.println("bytesDecoded : " + bytesDecoded);
+
+                        if (bytesDecoded < 0)
+                            throw new RuntimeException("got error decoding audio in: " + filename);
+                            
+                        offset += bytesDecoded;
+
+                        if (samples.isComplete())
+                            writer.writeBinary(samples.getData().getByteArray(0, samples.getSize()));
+                    }
+                    samples.delete();
+                }
+                System.out.println("音楽ファイルの伝送を終了しました");
+                
+                audioCoder.close();
+            }
+            catch (IOException e)
+            {
+            }
+            finally
+            {
+                if(audioCoder != null)
+                {
+                    if(audioCoder.isOpen())
+                        audioCoder.close();
+
+                    audioCoder.delete();
+                }
+                container.close();
+                container.delete();
+            }
         }
     }
 }

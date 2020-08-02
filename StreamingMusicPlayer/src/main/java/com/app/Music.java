@@ -15,7 +15,7 @@ public class Music implements Runnable, Closeable
 
     private Thread playThread = new Thread(this);
 
-    private MyByteStream stream = new MyByteStream(16777216);
+    private MyByteStream stream = new MyByteStream(131072);
 
     public Music(SourceDataLine line) throws LineUnavailableException
     {
@@ -40,35 +40,16 @@ public class Music implements Runnable, Closeable
             {
                 if(playing)
                 {
-                    // if((numBytesRead = reader.readBinary(data, 0, line.available())) == -1)
-                    // {  
-                    //     break;
-                    // }
-
-                    byte[] bytes = stream.take(line.available());
-                    //if(bytes.length == 0)
-                    //    break;
-
-                    line.write(bytes, 0, bytes.length);
-                    playedBytes += bytes.length;
-
-                    // int sum = 0, numBytesRead = 0;
-                    // while(bytes.length > sum)
-                    // {
-                    //     numBytesRead = line.available();
-                    //     if(sum + numBytesRead > bytes.length)
-                    //     {
-                    //         numBytesRead -= sum + numBytesRead - bytes.length;
-                    //     }
-
-                    //     playedBytes += numBytesRead;
-
-                    //     line.write(bytes, sum, numBytesRead);
-                    //     //System.out.println(line.isActive() && line.isOpen() && line.isRunning());
-                    //     System.out.println("write " + numBytesRead);
-                        
-                    //     sum += numBytesRead;
-                    // }
+                    int available = line.available();
+                    if(available > 0)
+                    {
+                        byte[] bytes = stream.take(available);
+                        if(bytes.length == 0)
+                            break;
+    
+                        line.write(bytes, 0, bytes.length);
+                        playedBytes += bytes.length;
+                    }
                 }
                 else
                 {
@@ -78,8 +59,7 @@ public class Music implements Runnable, Closeable
             
             line.drain();
             line.stop();
-            playing = false;
-            finished = true;
+            finish();
         }
         finally
         {
@@ -111,6 +91,8 @@ public class Music implements Runnable, Closeable
     {
         System.out.println("finish");
         finished = true;
+        playing = false;
+        stream.finish();
     }
 
     public int getPlayedBytes()
@@ -121,6 +103,11 @@ public class Music implements Runnable, Closeable
     public boolean isFinished()
     {
         return finished;
+    }
+
+    public void noMoreData()
+    {
+        stream.close();
     }
 
     @Override
@@ -139,6 +126,8 @@ public class Music implements Runnable, Closeable
 
         private int head, tail;
 
+        private boolean closed, finished;
+
         private Lock lock = new ReentrantLock();
         private Condition cond_put = lock.newCondition();
         private Condition cond_take = lock.newCondition();
@@ -149,10 +138,12 @@ public class Music implements Runnable, Closeable
 
             bytes = new byte[length];
             head = tail = 0;
+            closed = this.finished = false;
         }
 
         public void put(byte[] b) throws IllegalArgumentException
         {
+            if(closed) throw new RuntimeException("既に閉じたストリームを使用しています");
             if(b.length >= this.length) throw new IllegalArgumentException("バッファのサイズを超えました (要求値 : " + b.length + ")");
             lock.lock();
             try
@@ -185,7 +176,7 @@ public class Music implements Runnable, Closeable
             {
                 lock.unlock();
             }
-            System.out.println("put : " + b.length);
+            //System.out.println("put : " + b.length);
         }
 
         public byte[] take(int len)
@@ -196,10 +187,26 @@ public class Music implements Runnable, Closeable
             try
             {
                 int seek = (head + len) % length;
-                while((tail < head && (seek < head && tail < seek)) ||
-                        (tail >= head && !(head <= seek && seek <= tail)))
+                while(((tail < head && (seek < head && tail < seek)) || (tail >= head && !(head <= seek && seek <= tail))) &&
+                        !closed && !this.finished)
                 {
                     cond_take.await();
+                }
+
+                if(this.finished)
+                    return new byte[0];
+
+                if(closed)
+                {
+                    int amount = 0;
+                    if(tail < head) amount = length - head + tail;
+                    else amount = tail - head;
+    
+                    if(len > amount)
+                        len = amount;
+
+                    if(len == 0)
+                        return new byte[0];
                 }
 
                 if(head + len > length)
@@ -224,8 +231,29 @@ public class Music implements Runnable, Closeable
             {
                 lock.unlock();
             }
-            System.out.println("take : " + len);
+            //System.out.println("take : " + len);
             return b;
+        }
+
+        public void close()
+        {
+            closed = true;
+            
+            lock.lock();
+            try
+            {
+                cond_take.signal();
+            }
+            finally
+            {
+                lock.unlock();
+            }
+        }
+
+        public void finish()
+        {
+            this.finished = true;
+            close();
         }
     }
 }
