@@ -75,16 +75,22 @@ public class Music implements Runnable, Closeable
     public void play() throws LineUnavailableException
     {
         System.out.println("play");
-        playing = true;
-        if(!playThread.isAlive()) playThread.start();
-        line.start();
+        if(!playing)
+        {
+            playing = true;
+            if(!playThread.isAlive()) playThread.start();
+            line.start();
+        }
     }
 
     public void stop()
     {
         System.out.println("stop");
-        playing = false;
-        line.stop();
+        if(playing)
+        {
+            playing = false;
+            line.stop();
+        }
     }
 
     public void finish()

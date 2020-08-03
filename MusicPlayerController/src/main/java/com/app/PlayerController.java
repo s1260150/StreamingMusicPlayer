@@ -9,10 +9,12 @@ import com.mylib.*;
 
 public class PlayerController extends Thread {
     public static String HOST = "localhost";
+    //public static String HOST = "192.168.10.120";
     public static final int PORT = 50576;
 
     static final String MSG_PLAY = "PLAY";
     static final String MSG_STOP = "STOP";
+    static final String MSG_RESUME = "RESUME";
     static final String MSG_MUSIC_FINISH = "MUSIC_FINISH";
     static final String MSG_FINISH = "FINISH";
 
@@ -31,7 +33,7 @@ public class PlayerController extends Thread {
                     String op = reader.readLine();
 
                     if (op.equals("p")) {
-                        System.out.println("ミュージックを再生します。\n1.wavtest.wav\n2.HIRAHIRA.mp3\n3.m4aTest.m4a");
+                        System.out.println("ミュージックを再生します。\n1.wavtest.wav\n2.HIRAHIRA.mp3\n3.m4aTest.m4a\n4.bgm_maoudamashii_healing15.ogg\n5.Debussy_Clair_de_lune_Stokowski_57.flac");
 
                         File path;
 
@@ -47,6 +49,14 @@ public class PlayerController extends Thread {
 
                             case 3:
                                 path = new File("Resources/m4aTest.m4a");
+                                break;
+                                
+                            case 4:
+                                path = new File("Resources/bgm_maoudamashii_healing15.ogg");
+                                break;
+
+                            case 5:
+                                path = new File("Resources/Debussy_Clair_de_lune_Stokowski_57.flac");
                                 break;
 
                             default:
@@ -68,6 +78,14 @@ public class PlayerController extends Thread {
                         System.out.println("ミュージックを一時停止します");
                         
                         writer.writeLine(MSG_STOP);
+                        task.stop();
+                    }
+                    else if (op.equals("r"))
+                    {
+                        System.out.println("ミュージックを再開します");
+                        
+                        task.resume();
+                        writer.writeLine(MSG_RESUME);
                     }
                     else if (op.equals("f"))
                     {
@@ -78,7 +96,9 @@ public class PlayerController extends Thread {
                         task = null;
 
                         writer.writeLine(MSG_MUSIC_FINISH);
-                    } else if (op.equals("exit")) {
+                    } 
+                    else if (op.equals("exit")) 
+                    {
                         System.out.println("終了します");
                         writer.writeLine(MSG_FINISH);
                         break;
@@ -101,16 +121,26 @@ public class PlayerController extends Thread {
         private String filename;
         private Socket socket;
 
-        private boolean closed;
+        private boolean closed, stopped;
 
         public Task(String filename, Socket socket) {
             this.filename = filename;
             this.socket = socket;
-            closed = false;
+            closed = stopped = false;
         }
 
         public void close() {
             closed = true;
+        }
+
+        public void stop()
+        {
+            stopped = true;
+        }
+
+        public void resume()
+        {
+            stopped = false;
         }
 
         @Override
@@ -180,6 +210,11 @@ public class PlayerController extends Thread {
                     int offset = 0;
                     while(offset < packet.getSize() && !closed)
                     {
+                        while(stopped)
+                        {
+                            Thread.yield();
+                        }
+
                         int bytesDecoded = audioCoder.decodeAudio(samples, packet, offset);
                         //System.out.println("bytesDecoded : " + bytesDecoded);
 

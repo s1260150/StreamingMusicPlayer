@@ -7,8 +7,6 @@ import com.mylib.*;
 
 import javax.sound.sampled.*;
 
-import it.sauronsoftware.jave.*;
-
 public class MusicPlayer {
 	// PORT Number
 	public static final int PORT = 50576; // 待ち受けポート番号
@@ -17,6 +15,7 @@ public class MusicPlayer {
 
 	static final String MSG_PLAY = "PLAY";
 	static final String MSG_STOP = "STOP";
+    static final String MSG_RESUME = "RESUME";
     static final String MSG_MUSIC_FINISH = "MUSIC_FINISH";
 	static final String MSG_FINISH = "FINISH";
 
@@ -26,34 +25,62 @@ public class MusicPlayer {
 	{
 	}
 
-	public void run() throws IOException, InterruptedException, IllegalArgumentException, EncoderException {
+	public void run()
+	{
+		try (ServerSocket ss = new ServerSocket(PORT)) 
+		{
+			while(true)
+			{
+				try (Socket cs = ss.accept(); MyReader reader = new MyReader(cs.getInputStream());) 
+				{
+					System.out.println("Welcome!");
 
-		try (ServerSocket ss = new ServerSocket(PORT)) {
-			try (Socket cs = ss.accept(); MyReader reader = new MyReader(cs.getInputStream());) {
-				System.out.println("Welcome!");
-
-				while (true) {
-					String msg = reader.readLine();
-					System.out.println("受信 : " + msg);
-					if(msg.equals(MSG_FINISH))
-						break;
-					else if (msg.equals(MSG_MUSIC_FINISH)) 
-					{
-						if (task != null)
-							task.close();
-						task = null;
-					} 
-					else if (msg.equals(MSG_PLAY)) 
-					{
-						task = new Task(ss.accept());
-						new Thread(task).start();
+					while (true) {
+						String msg = reader.readLine();
+						System.out.println("受信 : " + msg);
+						if(msg.equals(MSG_FINISH))
+						{
+							if (task != null)
+								task.close();
+							task = null;
+							break;
+						}
+						else if (msg.equals(MSG_MUSIC_FINISH)) 
+						{
+							if (task != null)
+								task.close();
+							task = null;
+						}  
+						else if (msg.equals(MSG_PLAY))
+						{
+							task = new Task(ss.accept());
+							new Thread(task).start();
+						}
+						else if (msg.equals(MSG_STOP))
+						{
+							if (task != null)
+								task.stop();
+						}
+						else if (msg.equals(MSG_RESUME))
+						{
+							if (task != null)
+								task.resume();
+						}
 					}
 				}
 			}
-		} catch (MalformedURLException e) {
+		}
+		catch (MalformedURLException e)
+		{
 			e.printStackTrace();
-		} catch (IOException e) {
+		}  
+		catch (LineUnavailableException e) 
+		{
 			e.printStackTrace();
+		}
+		catch (IOException e) 
+		{
+			System.out.println("Disconnected");
 		}
 	}
 
@@ -63,6 +90,8 @@ public class MusicPlayer {
 
 		private boolean closed;
 
+		private Music music;
+
 		public Task(Socket socket) {
 			this.socket = socket;
 			closed = false;
@@ -71,6 +100,18 @@ public class MusicPlayer {
 		public void close()
 		{
 			closed = true;
+		}
+
+		public void stop()
+		{
+			if(music != null)
+				music.stop();
+		}
+
+		public void resume() throws LineUnavailableException
+		{
+			if(music != null)
+				music.play();
 		}
 
 		@Override
@@ -95,6 +136,7 @@ public class MusicPlayer {
 
 				try(Music music = new Music(s))
 				{
+					this.music = music;
 					music.play();
 					
 					int bytesRead = 0;
@@ -125,6 +167,10 @@ public class MusicPlayer {
 			}
 			catch (IOException e)
 			{
+			}
+			finally
+			{
+				this.music = null;
 			}
 		}
 	}
